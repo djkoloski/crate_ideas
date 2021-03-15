@@ -14,6 +14,7 @@ computing.
 | [assets](#assets)         | Asset management and bundling             | 💭 Planning                   |
 | [vectorize](#vectorize)   | SIMD vectorization for aggregate types    | 💭 Planning                   |
 | [splinter](#splinter)     | Proven and performant spline library      | 🚧 [In progress][splinter]    |
+| [protoss](#protoss)       | Protocol type generation                  | 💭 Planning                   |
 
 [rkyv]: https://github.com/djkoloski/rkyv
 [bytecheck]: https://github.com/djkoloski/rkyv
@@ -107,3 +108,104 @@ High-performance spline library with proofs for its algorithms.
 
 Needs more support for approximate algorithms with error bounds and for larger structures (like full
 splines rather than curves).
+
+## `protoss`
+
+Cap'n Proto and FlatBuffers support schema evolution by restricting how types can change:
+
+- New fields can only be added at the ends of types
+- Old fields can't be deleted, only deprecated
+
+These rules could be enforced pretty easily, and some macros could be used to get the same style of
+declaration as .proto and .capnp files:
+
+```rust
+use protoss::Proto;
+
+#[derive(Proto)]
+pub struct MyMessage {
+  #[id = 0]
+  pub a: i32;
+  #[id = 2]
+  pub b: u32;
+  #[id = 1]
+  pub c: String;
+}
+```
+
+would generate:
+
+```rust
+use protoss::Proto;
+
+pub struct MyMessage {
+  pub a: i32,
+  pub b: u32,
+  pub c: String,
+}
+
+#[repr(C)]
+pub struct ArchivedMyMessage {
+  bytes: [u8],
+}
+
+const _: () = {
+  impl ArchivedMyMessage {
+    pub fn a(&self) -> Option<&Archived<i32>> {
+      // ...
+    }
+    pub fn b(&self) -> Option<&Archived<u32>> {
+      // ...
+    }
+    pub fn c(&self) -> Option<&Archived<String>> {
+      // ...
+    }
+    pub fn a_pin(self: Pin<&mut Self>) -> Pin<&mut Archived<i32>> {
+      // ...
+    }
+    pub fn b_pin(self: Pin<&mut Self>) -> Pin<&mut Archived<u32>> {
+      // ...
+    }
+    pub fn c_pin(self: Pin<&mut Self>) -> Pin<&mut Archived<String>> {
+      // ...
+    }
+  }
+
+  #[repr(C)]
+  struct ArchivedMyMessageData
+  where
+  {
+    a: rkyv::Archived<i32>,
+    c: rkyv::Archived<String>,
+    b: rkyv::Archived<u32>,
+  }
+
+  use rkyv::{ArchivedMetadata, Serialize, Serializer, SerializeUnsized};
+
+  impl ArchivePointee for ArchivedMyMessage {
+    type ArchivedMetadata = ArchivedUSize;
+
+    fn pointer_metadata(archived: &Self::ArchivedMetadata) -> <Self as Pointee>::Metadata {
+      archived as usize
+    }
+  }
+
+  impl ArchiveUnsized for ArchivedMyMessage {
+    type Archived = ArchivedMyMessage;
+    type MetadataResolver = ();
+
+    fn resolve_metadata(&self, _: usize, _: Self::MetadataResolver) -> ArchivedMetadata<Self> {
+      core::mem::size_of::<ArchivedMyMessageData>() as ArchivedUSize
+    }
+  }
+
+  impl<S: Serializer + ?Sized> SerializeUnsized<S> for MyMessage
+  where
+    i32: Serialize<S>,
+    String: Serialize<S>,
+    u32: Serialize<S>,
+  {
+    // serialize fields, build archived data type, write to serializer
+  }
+};
+```
