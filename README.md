@@ -5,16 +5,19 @@ computing.
 
 ## List
 
-| Name                      | Description                               | Status                        |
-|---------------------------|-------------------------------------------|-------------------------------|
-| [rkyv](#rkyv)             | Zero-copy deserialization framework       | ✅ [Done][rkyv]               |
-| [bytecheck](#bytecheck)   | Byte validation framework                 | ✅ [Done][bytecheck]          |
-| [ptr_meta](#ptr_meta)     | Stabilization of the `ptr_meta` RFC       | ✅ [Done][ptr_meta]           |
-| [skema](#skema)           | Dynamic schemas and foreign types         | 💭 Planning                   |
-| [assets](#assets)         | Asset management and bundling             | 💭 Planning                   |
-| [vectorize](#vectorize)   | SIMD vectorization for aggregate types    | 💭 Planning                   |
-| [splinter](#splinter)     | Proven and performant spline library      | 🚧 [In progress][splinter]    |
-| [protoss](#protoss)       | Protocol type generation                  | 💭 Planning                   |
+| Name                              | Description                               | Status                        |
+|-----------------------------------|-------------------------------------------|-------------------------------|
+| [rkyv](#rkyv)                     | Zero-copy deserialization framework       | ✅ [Done][rkyv]               |
+| [bytecheck](#bytecheck)           | Byte validation framework                 | ✅ [Done][bytecheck]          |
+| [ptr_meta](#ptr_meta)             | Stabilization of the `ptr_meta` RFC       | ✅ [Done][ptr_meta]           |
+| [skema](#skema)                   | Dynamic schemas and foreign types         | 💭 Planning                   |
+| [assets](#assets)                 | Asset management and bundling             | 💭 Planning                   |
+| [vectorize](#vectorize)           | SIMD vectorization for aggregate types    | 💭 Planning                   |
+| [splinter](#splinter)             | Proven and performant spline library      | 🚧 [In progress][splinter]    |
+| [protoss](#protoss)               | Protocol type generation                  | 💭 Planning                   |
+| [rkyv_compress](#rkyv_compress)   | Compression types for rkyv                | 💭 Planning                   |
+| [rkyv_mmap](#rkyv_mmap)           | Memory mapping helpers for rkyv           | 💭 Planning                   |
+| [rkyv_intern](#rkyv_intern)       | Value interning for rkyv                  | 💭 Planning                   |
 
 [rkyv]: https://github.com/djkoloski/rkyv
 [bytecheck]: https://github.com/djkoloski/rkyv
@@ -209,3 +212,73 @@ const _: () = {
   }
 };
 ```
+
+## `rkyv_compress`
+
+Compression wrapper types for rkyv. For example:
+
+```rust
+use rkyv::{Archive, Deserialize, Serialize};
+use rkyv_compress::LZ4;
+
+#[derive(Archive, Serialize, Deserialize)]
+struct Texture {
+    width: usize,
+    height: usize,
+    data: LZ4<Vec<u8>>,
+}
+
+let buf = ...
+let texture = unsafe { archived_root::<Texture>(buf) };
+
+// able to access width and height
+println!("width: {}, height: {}", texture.width, texture.height);
+// can access compressed bytes
+println!("compressed length: {}", texture.data.compressed_len());
+// deserializes normally
+println!("uncompressed length: {}", texture.data.deserialize().len());
+```
+
+### Main concepts
+
+Compression wrapper types:
+- `LZ4<T>`, `Zip<T>`, etc.
+- Act like thin wrappers around the inner type
+- Serialize boxy and write compressed data to the serializer and point to it with a `RawRelPtr`
+
+Serializer bounds:
+- `pub trait CompressionSerializer<C>`
+- Needed so that compressed values can be serialized into a separate "temporary" archive and then compressed and written to the "permanent" archive
+- Could be how dictionary training occurs
+
+Look at `lzzzz`.
+
+## `rkyv_mmap`
+
+Some helper functions for `mmap`-ing files with rkyv. Nothing too fancy, just to help users get something working end-to-end easily.
+
+## `rkyv_intern`
+
+Interning values for better compression. For example:
+
+```rust
+use rkyv::{Archive, Deserialize, Serialize};
+use rkyv_intern::Intern;
+
+#[derive(Archive, Serialize, Deserialize)]
+pub struct Log {
+    request_type: Intern<String>,
+    path: Intern<String>,
+    response: u16,
+    time: String,
+}
+
+let mut serializer = InternSerializer::new(WriteSerializer::new(Vec::new()));
+// serialize value
+let buf = // ...
+let value = unsafe { archived_root::<Log>(buf) };
+```
+
+- Interned objects can't be mutated through `Pin`s
+- Inner type must be `Eq`
+- Transparently dereferences to the inner type
