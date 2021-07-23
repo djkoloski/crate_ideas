@@ -22,6 +22,7 @@ computing.
 | [rkyv_stream](#rkyv_stream)       | Streaming serialization for rkyv          | 💭 Planning                   |
 | [structver](#structver)           | Automatic struct versioning               | 💭 Planning                   |
 | [rkyv_dow](#rkyv_dow)             | Deserialize-on-write structures for rkyv  | 💭 Planning                   |
+| [progresso](#progresso)           | Lazy validation adapter for bytecheck     | 💭 Planning                   |
 
 [rkyv]: https://github.com/djkoloski/rkyv
 [bytecheck]: https://github.com/djkoloski/rkyv
@@ -408,3 +409,18 @@ modifications are complete, the structure can be re-serialized to disk.
 This would require some library support, since every archived type would additionally need to
 archive to itself. However, they wouldn't necessarily be `ArchiveCopy` because they would still have
 non-ZST resolvers and perform work.
+
+## `progresso`
+
+One of the major puzzle pieces that remains unsolved for rkyv is progressive validation. This is essentially navigating through an archive and only validating the portions that you actually use. Solving this for the extreme general case of mutable access to progressively validated data is daunting at best and impossible at worst. Some example tricky cases:
+
+- Shared pointers cannot be verified to be located in a valid memory range because the first instance of the shared pointer may not have been encountered yet
+- Mutating the underlying memory is not safe unless you have a guarantee that there will no other references (`const` or `mut`) to the same region
+  - This requires that all subobjects be located in disjoint memory regions (which is part of what `bytecheck` ensures)
+
+API:
+- Obtain a progressive validator by wrapping a pointer to the root object
+- Progressive validators can be either `const` or `mut`, but neither can provide progressive mutable access
+- You can check the whole subobject with `bytecheck` and get back a reference to the archived object
+- Checking the whole subobject allows mutable access if checked with a mutable progressive validator
+- Accessing a specific field returns a subobject with the validation stepped and preserves the outer validator
